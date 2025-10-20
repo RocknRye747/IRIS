@@ -62,7 +62,7 @@ def test_api():
         print("\n4. Testing Worker Session Creation...")
         worker_data = {
             "external_tracker_id": "test_tracker_001",
-            "site_id": "warehouse_test"
+            "site_name": "warehouse_test"
         }
         response = requests.post(f"{BASE_URL}/workers/sessions", 
                                headers=headers, 
@@ -165,6 +165,8 @@ def test_api():
         # Test 8: Site Statistics
         print("\n8. Testing Site Statistics...")
         response = requests.get(f"{BASE_URL}/reports/sites/warehouse_test/stats", headers=headers)
+
+        
         if response.status_code == 200:
             stats = response.json()
             print("✅ Site statistics generated")
@@ -194,13 +196,39 @@ def test_api():
         print(f"   • Created {len(created_events)} lift events")
         print(f"   • Generated employee and aggregate reports")
         print(f"   • Tested authentication and worker management")
-        print(f"   • All core API functionality verified")
+        print("   • All core API functionality verified")
         
     except requests.exceptions.ConnectionError:
         print("❌ Connection Error: Make sure the API server is running on http://localhost:8000")
         print("   Start the server with: python lift_bot_api.py")
     except Exception as e:
         print(f"❌ Unexpected error: {e}")
+    finally:
+        if 'worker_id' in locals():
+            teardown_api_test(worker_id)
+        
+
+def teardown_api_test(worker_id: str):
+    """Cleans up test data after API tests."""
+    print("\n🧹 Cleaning up test data...")
+    headers = {
+        "X-API-Key": API_KEY,
+        "Content-Type": "application/json"
+    }
+    # Authenticate to get a token for cleanup
+    response = requests.post(f"{BASE_URL}/auth/token", headers=headers)
+    if response.status_code == 200:
+        token_data = response.json()
+        headers["Authorization"] = f"Bearer {token_data['access_token']}"
+
+        # Delete worker session and associated data
+        response = requests.delete(f"{BASE_URL}/workers/{worker_id}", headers=headers)
+        if response.status_code == 200:
+            print(f"✅ Worker {worker_id} and associated data cleaned up successfully.")
+        else:
+            print(f"❌ Failed to clean up worker {worker_id}: {response.status_code} - {response.text}")
+    else:
+        print(f"❌ Failed to authenticate for cleanup: {response.status_code} - {response.text}")
 
 if __name__ == "__main__":
     test_api()
