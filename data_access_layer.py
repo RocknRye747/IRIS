@@ -85,10 +85,10 @@ class DataAccessLayer:
         return worker
 
     # --- LiftEvent Operations ---
-    def create_lift_event(self, worker_id: str, risk_score: float, safe_lift: bool, angle_data: Optional[Dict[str, Any]] = None) -> LiftEvent:
+    def create_lift_event(self, worker_id: str, risk_score: float, safe_lift: bool, angle_data: Optional[Dict[str, Any]] = None, timestamp: Optional[datetime] = None) -> LiftEvent:
         lift_event = LiftEvent(
             worker_id=worker_id,
-            timestamp=datetime.utcnow(),
+            timestamp=timestamp if timestamp else datetime.utcnow(),
             risk_score=risk_score,
             safe_lift=safe_lift,
             angle_data=angle_data # SQLAlchemy handles JSON serialization for Dict[str, Any]

@@ -11,6 +11,7 @@ import uvicorn
 from passlib.context import CryptContext
 from jose import JWTError, jwt
 import os
+from contextlib import asynccontextmanager
 
 # Import our database models and utilities
 from database import init_db, Base, Site, Worker, LiftEvent, Report
@@ -20,32 +21,14 @@ from data_access_layer import DataAccessLayer
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Initialize FastAPI app
-app = FastAPI(
-    title="Lift Bot API",
-    description="AI-powered ergonomics monitoring platform for warehouse and retail environments",
-    version="1.0.0",
-    docs_url="/docs",
-    redoc_url="/redoc"
-)
-
-# CORS middleware for cross-origin requests
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],  # In production, specify allowed origins
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
-
 # Security configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "your-secret-key-change-in-production")
+SECRET_KEY = os.getenv("SECRET_KEY", "Petey")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # API Key configuration
 API_KEY_NAME = "X-API-Key"
-API_KEY = os.getenv("API_KEY", "your-api-key-change-in-production")
+API_KEY = os.getenv("API_KEY", "Bubby0824!")
 
 # Password hashing (not directly used for API key, but good practice for user management)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -57,10 +40,9 @@ api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 # Initialize database
 SessionLocal, engine = init_db(drop_all=os.getenv("TEST_MODE") == "true")
 
-# Ensure tables are created when the app starts
-@app.on_event("startup")
-async def startup_event():
-    # For testing purposes, drop and recreate tables if TEST_MODE is enabled
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup logic: Ensure tables are created and handle test mode reset
     if os.getenv("TEST_MODE") == "true":
         logger.info("TEST_MODE is true. Dropping all database tables.")
         Base.metadata.drop_all(bind=engine)
@@ -68,9 +50,33 @@ async def startup_event():
         logger.info("Database tables dropped and recreated for testing.")
     else:
         # This will create tables if they don\'t exist
-        # It\'s safe to call multiple times
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables ensured to be created.")
+    
+    # Yield control to the application
+    yield
+
+    # Shutdown logic (optional)
+    logger.info("Shutting down application...")
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="Lift Bot API",
+    description="AI-powered ergonomics monitoring platform for warehouse and retail environments",
+    version="1.0.0",
+    docs_url="/docs",
+    redoc_url="/redoc",
+    lifespan=lifespan
+)
+
+# CORS middleware for cross-origin requests
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],  # In production, specify allowed origins
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 # Pydantic Models for API
 
@@ -338,44 +344,37 @@ async def get_employee_report(
     dal: DataAccessLayer = Depends(get_dal),
     api_key: str = Depends(verify_api_key)
 ):
-    """Get employee-specific report for a given date"""
+    """Generate a daily report for a specific worker"""
     try:
-        if not report_date:
-            report_date = date.today()
+        target_date = report_date if report_date else date.today()
         
-        lift_events = dal.get_lift_events_by_worker_and_date(worker_id, report_date)
+        # 1. Get all lift events for the worker on the target date
+        lift_events = dal.get_lift_events_by_worker_and_date(worker_id, target_date)
         
         if not lift_events:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
                 detail="No data found for this worker on the specified date"
             )
-        
-        # Calculate statistics
+            
+        # 2. Calculate metrics
         total_lifts = len(lift_events)
         safe_lifts = sum(1 for event in lift_events if event.safe_lift)
         unsafe_lifts = total_lifts - safe_lifts
-        avg_risk = sum(event.risk_score for event in lift_events) / total_lifts
+        avg_risk = sum(event.risk_score for event in lift_events) / total_lifts if total_lifts > 0 else 0.0
         
-        # Calculate improvement vs last week (placeholder logic)
-        last_week_date = report_date - timedelta(days=7)
-        last_week_events = dal.get_lift_events_by_worker_and_date(worker_id, last_week_date)
+        # 3. Generate report response
+        report_data = {
+            "worker_id": worker_id,
+            "date": target_date,
+            "total_lifts": total_lifts,
+            "safe_lifts": safe_lifts,
+            "unsafe_lifts": unsafe_lifts,
+            "avg_risk": round(avg_risk, 2),
+            "improvement_vs_last_week": "N/A (Feature not yet implemented)"
+        }
         
-        improvement_vs_last_week = None
-        if last_week_events:
-            last_week_avg_risk = sum(event.risk_score for event in last_week_events) / len(last_week_events)
-            improvement = ((last_week_avg_risk - avg_risk) / last_week_avg_risk) * 100
-            improvement_vs_last_week = f"{improvement:+.1f}%"
-        
-        return EmployeeReportResponse(
-            worker_id=worker_id,
-            date=report_date,
-            total_lifts=total_lifts,
-            safe_lifts=safe_lifts,
-            unsafe_lifts=unsafe_lifts,
-            avg_risk=round(avg_risk, 2),
-            improvement_vs_last_week=improvement_vs_last_week
-        )
+        return EmployeeReportResponse.model_validate(report_data)
         
     except HTTPException:
         raise
@@ -388,59 +387,39 @@ async def get_employee_report(
 
 @app.get("/reports/aggregate", response_model=AggregateReportResponse, tags=["Reports"])
 async def get_aggregate_report(
+    site_name: Optional[str] = None,
     start_date: Optional[date] = None,
     end_date: Optional[date] = None,
-    site_name: Optional[str] = None,
     dal: DataAccessLayer = Depends(get_dal),
     api_key: str = Depends(verify_api_key)
 ):
-    """Get aggregate report for a date range and optional site"""
+    """Generate an aggregate report for a site or the entire system over a period"""
     try:
-        if not start_date:
-            start_date = date.today() - timedelta(days=7)
-        if not end_date:
-            end_date = date.today()
+        # Default to today if no dates are provided
+        today = date.today()
+        start = start_date if start_date else today
+        end = end_date if end_date else today
         
-        site_id = None
-        if site_name:
-            site = dal.get_site_by_name(site_name)
-            if not site:
-                raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Site \'{site_name}\' not found")
-            site_id = site.site_id
-
-        lift_events = dal.get_lift_events_in_period(start_date, end_date, site_id)
+        # 1. Get all lift events and workers in the scope/period
+        metrics = dal.get_aggregate_metrics(site_name, start, end)
         
-        if not lift_events:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="No data found for the specified period"
-            )
+        # 2. Generate report response
+        period_str = f"{start.isoformat()} to {end.isoformat()}"
+        if start == end:
+            period_str = start.isoformat()
+            
+        report_data = {
+            "period": period_str,
+            "total_workers": metrics["total_workers"],
+            "total_lifts": metrics["total_lifts"],
+            "safe_lifts": metrics["safe_lifts"],
+            "unsafe_lifts": metrics["unsafe_lifts"],
+            "avg_risk": round(metrics["avg_risk"], 2) if metrics["total_lifts"] > 0 else 0.0,
+            "trend": "N/A (Feature not yet implemented)"
+        }
         
-        # Calculate statistics
-        total_lifts = len(lift_events)
-        safe_lifts = sum(1 for event in lift_events if event.safe_lift)
-        unsafe_lifts = total_lifts - safe_lifts
-        avg_risk = sum(event.risk_score for event in lift_events) / total_lifts
+        return AggregateReportResponse.model_validate(report_data)
         
-        # Count unique workers
-        unique_workers = len(set(event.worker_id for event in lift_events))
-        
-        # Calculate trend (placeholder logic)
-        period_str = f"{start_date} to {end_date}"
-        trend = "stable"  # This would be calculated based on historical data
-        
-        return AggregateReportResponse(
-            period=period_str,
-            total_workers=unique_workers,
-            total_lifts=total_lifts,
-            safe_lifts=safe_lifts,
-            unsafe_lifts=unsafe_lifts,
-            avg_risk=round(avg_risk, 2),
-            trend=trend
-        )
-        
-    except HTTPException:
-        raise
     except Exception as e:
         logger.error(f"Error generating aggregate report: {e}")
         raise HTTPException(
@@ -456,47 +435,40 @@ async def get_site_statistics(
     dal: DataAccessLayer = Depends(get_dal),
     api_key: str = Depends(verify_api_key)
 ):
-    """Get statistics for a specific site"""
+    """Generate statistics for a specific site over a period"""
     try:
-        if not start_date:
-            start_date = date.today() - timedelta(days=30)
-        if not end_date:
-            end_date = date.today()
-        
-        # Verify site exists
+        # 1. Verify site existence
         site = dal.get_site_by_name(site_name)
         if not site:
-            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail=f"Site with name \'{site_name}\' not found")
-        site_id = site.site_id
-
-        lift_events = dal.get_lift_events_in_period(start_date, end_date, site_id)
-        
-        if not lift_events:
             raise HTTPException(
                 status_code=status.HTTP_404_NOT_FOUND,
-                detail="No data found for the specified period"
+                detail=f"Site with name '{site_name}' not found"
             )
+            
+        # Default to today if no dates are provided
+        today = date.today()
+        start = start_date if start_date else today
+        end = end_date if end_date else today
         
-        # Calculate statistics
-        total_lifts = len(lift_events)
-        safe_lifts = sum(1 for event in lift_events if event.safe_lift)
-        unsafe_lifts = total_lifts - safe_lifts
-        avg_risk = sum(event.risk_score for event in lift_events) / total_lifts
+        # 2. Get aggregate metrics for the site
+        metrics = dal.get_aggregate_metrics(site_name, start, end)
         
-        # Count unique workers for the site
-        unique_workers = len(set(event.worker_id for event in lift_events))
+        # 3. Generate response
+        period_str = f"{start.isoformat()} to {end.isoformat()}"
+        if start == end:
+            period_str = start.isoformat()
+            
+        stats_data = {
+            "site_id": site.site_id,
+            "period": period_str,
+            "total_workers": metrics["total_workers"],
+            "total_lifts": metrics["total_lifts"],
+            "safe_lifts": metrics["safe_lifts"],
+            "unsafe_lifts": metrics["unsafe_lifts"],
+            "avg_risk": round(metrics["avg_risk"], 2) if metrics["total_lifts"] > 0 else 0.0
+        }
         
-        period_str = f"{start_date} to {end_date}"
-        
-        return SiteStatsResponse(
-            site_id=site_id,
-            period=period_str,
-            total_workers=unique_workers,
-            total_lifts=total_lifts,
-            safe_lifts=safe_lifts,
-            unsafe_lifts=unsafe_lifts,
-            avg_risk=round(avg_risk, 2)
-        )
+        return SiteStatsResponse.model_validate(stats_data)
         
     except HTTPException:
         raise
@@ -507,7 +479,37 @@ async def get_site_statistics(
             detail="Failed to generate site statistics"
         )
 
+@app.delete("/data/worker/{worker_id}", tags=["Privacy"])
+async def delete_worker_data(
+    worker_id: str,
+    dal: DataAccessLayer = Depends(get_dal),
+    api_key: str = Depends(verify_api_key)
+):
+    """Delete all data for a specific worker (GDPR compliance)"""
+    try:
+        deleted_counts = dal.delete_worker_data(worker_id)
+        if deleted_counts["worker_records_deleted"] == 0:
+            raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Worker not found")
+        
+        logger.info(f"Deleted data for worker {worker_id}: {deleted_counts['lift_events_deleted']} lift events, {deleted_counts['worker_records_deleted']} worker record")
+        
+        return {
+            "message": f"All data for worker {worker_id} has been deleted",
+            "lift_events_deleted": deleted_counts["lift_events_deleted"],
+            "worker_records_deleted": deleted_counts["worker_records_deleted"]
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting worker data: {e}")
+        dal.db.rollback()
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail="Failed to delete worker data"
+        )
+
+
 # Main entry point for running the FastAPI app with Uvicorn
 if __name__ == "__main__":
     uvicorn.run(app, host="0.0.0.0", port=8000)
-
