@@ -6,8 +6,10 @@ from cjm_byte_track.byte_tracker import BYTETracker # Explicitly import BYTETrac
 
 from worker_tracker import WorkerSessionManager # Import our WorkerSessionManager
 from database import init_db, LiftEvent # Import DB utilities
+from video_streamer import VideoStreamer # Import our VideoStreamer
 import json
 from datetime import datetime
+import time
 
 def calculate_angle(a, b, c):
     """
@@ -62,11 +64,12 @@ def get_landmark_coordinates(landmarks, landmark_enum):
 
 def analyze_pose(landmarks):
     """
-    Analyzes the detected pose for ergonomic risks (back rounding, straight-leg lifts).
-    Returns a dictionary with safe_lift (boolean) and risk_score (0-100).
+    Analyzes the detected pose for ergonomic risks (back rounding, straight-leg lifts, twisting).
+    Returns a dictionary with safe_lift (boolean), risk_score (0-100), and detailed angle_data.
     """
     risk_score = 0.0
     safe_lift = True
+    angle_data = {}
 
     # Define landmark indices for clarity
     # Using MediaPipe Pose landmarks: https://google.github.io/mediapipe/solutions/pose.html
@@ -78,6 +81,9 @@ def analyze_pose(landmarks):
     RIGHT_KNEE = mp.solutions.pose.PoseLandmark.RIGHT_KNEE
     LEFT_ANKLE = mp.solutions.pose.PoseLandmark.LEFT_ANKLE
     RIGHT_ANKLE = mp.solutions.pose.PoseLandmark.RIGHT_ANKLE
+    NOSE = mp.solutions.pose.PoseLandmark.NOSE
+    LEFT_EAR = mp.solutions.pose.PoseLandmark.LEFT_EAR
+    RIGHT_EAR = mp.solutions.pose.PoseLandmark.RIGHT_EAR
 
     # Extract coordinates
     left_shoulder = get_landmark_coordinates(landmarks, LEFT_SHOULDER)
@@ -88,82 +94,111 @@ def analyze_pose(landmarks):
     right_knee = get_landmark_coordinates(landmarks, RIGHT_KNEE)
     left_ankle = get_landmark_coordinates(landmarks, LEFT_ANKLE)
     right_ankle = get_landmark_coordinates(landmarks, RIGHT_ANKLE)
+    nose = get_landmark_coordinates(landmarks, NOSE)
+    left_ear = get_landmark_coordinates(landmarks, LEFT_EAR)
+    right_ear = get_landmark_coordinates(landmarks, RIGHT_EAR)
 
     # --- Back Rounding (Spine Angle) --- 
-    # We'll use the left side for consistency, assuming symmetry
-    if all([left_shoulder, right_shoulder, left_hip, right_hip, left_knee]):
+    # Using mid-shoulder, mid-hip, and mid-knee to approximate torso bend relative to legs
+    back_angle = None
+    if all([left_shoulder, right_shoulder, left_hip, right_hip, left_knee, right_knee]):
         mid_shoulder = np.array([(left_shoulder[0] + right_shoulder[0]) / 2, (left_shoulder[1] + right_shoulder[1]) / 2, (left_shoulder[2] + right_shoulder[2]) / 2])
         mid_hip = np.array([(left_hip[0] + right_hip[0]) / 2, (left_hip[1] + right_hip[1]) / 2, (left_hip[2] + right_hip[2]) / 2])
+        mid_knee = np.array([(left_knee[0] + right_knee[0]) / 2, (left_knee[1] + right_knee[1]) / 2, (left_knee[2] + right_knee[2]) / 2])
 
-        # Angle between shoulder-hip vector and hip-knee vector (approximating torso bend)
-        # Points: mid_shoulder (A), mid_hip (B), left_knee (C)
-        back_angle = calculate_angle(mid_shoulder, mid_hip, left_knee)
+        # Angle between mid_shoulder - mid_hip - mid_knee (approximating torso bend relative to legs)
+        back_angle = calculate_angle(mid_shoulder, mid_hip, mid_knee)
+        angle_data['back_angle'] = round(back_angle, 2)
 
-        # Risk calculation for back angle
-        if back_angle > 60: # Significant forward bend
-            back_risk = (back_angle - 60) * 1.5 # Higher penalty
-            safe_lift = False
-        elif back_angle > 30: # Moderate bend
-            back_risk = (back_angle - 30) * 0.5
-            safe_lift = False
-        else:
-            back_risk = 0
-        
-        # Weight for back risk
-        risk_score += back_risk * 0.6
+        # Risk calculation for back angle (more granular thresholds based on NIOSH/ergonomic guidelines)
+        if back_angle is not None:
+            if back_angle > 120: # Significant forward bend (e.g., stooping)
+                back_risk = (back_angle - 120) * 2.0 # Higher penalty for extreme bend
+                safe_lift = False
+            elif back_angle > 90: # Moderate bend
+                back_risk = (back_angle - 90) * 1.0
+                safe_lift = False
+            else:
+                back_risk = 0
+            risk_score += back_risk * 0.5 # Weight for back risk
 
     # --- Straight-Leg Lifts (Knee Angle) --- 
+    knee_angle = None
     if all([left_hip, left_knee, left_ankle]):
         # Angle between hip-knee vector and knee-ankle vector
-        # Points: left_hip (A), left_knee (B), left_ankle (C)
         knee_angle = calculate_angle(left_hip, left_knee, left_ankle)
+        angle_data['left_knee_angle'] = round(knee_angle, 2)
 
-        # Risk calculation for knee angle
-        if knee_angle > 160: # Legs too straight
-            knee_risk = (knee_angle - 160) * 1.0
-            safe_lift = False
-        elif knee_angle < 70: # Squatting too deep (also a risk)
-            knee_risk = (70 - knee_angle) * 0.7
-            safe_lift = False
-        else:
-            knee_risk = 0
-        
-        # Weight for knee risk
-        risk_score += knee_risk * 0.25
+        # Risk calculation for knee angle (emphasizing squat vs. stoop)
+        if knee_angle is not None:
+            if knee_angle > 160: # Legs too straight (stooping tendency)
+                knee_risk = (knee_angle - 160) * 1.5 # Higher penalty for straight legs
+                safe_lift = False
+            elif knee_angle < 80: # Squatting too deep (can also be a risk if extreme, but less common for injury)
+                knee_risk = (80 - knee_angle) * 0.5 # Moderate penalty
+                safe_lift = False
+            else:
+                knee_risk = 0
+            risk_score += knee_risk * 0.3 # Weight for knee risk
 
-    # --- Twisting Under Load (Approximation) --- 
-    # This is harder to do accurately without a clear 'load' or 3D orientation
-    # For now, we'll use a simple shoulder-hip alignment check.
+    # --- Twisting Under Load (Shoulder-Hip Alignment) --- 
+    twist_angle = None
     if all([left_shoulder, right_shoulder, left_hip, right_hip]):
-        shoulder_vector = np.array(right_shoulder) - np.array(left_shoulder)
-        hip_vector = np.array(right_hip) - np.array(left_hip)
+        # Project shoulder and hip vectors onto the XY plane to measure twist
+        shoulder_vector = np.array(right_shoulder)[:2] - np.array(left_shoulder)[:2]
+        hip_vector = np.array(right_hip)[:2] - np.array(left_hip)[:2]
 
-        # Calculate angle between the two vectors projected onto the XY plane (ignoring Z for simplicity in 2D view)
-        shoulder_vector_2d = shoulder_vector[:2]
-        hip_vector_2d = hip_vector[:2]
+        # Calculate the angle between these two 2D vectors
+        dot_product = np.dot(shoulder_vector, hip_vector)
+        magnitude_shoulder = np.linalg.norm(shoulder_vector)
+        magnitude_hip = np.linalg.norm(hip_vector)
 
-        dot_product_2d = np.dot(shoulder_vector_2d, hip_vector_2d)
-        magnitude_shoulder_2d = np.linalg.norm(shoulder_vector_2d)
-        magnitude_hip_2d = np.linalg.norm(hip_vector_2d)
+        if magnitude_shoulder > 0 and magnitude_hip > 0:
+            cosine_angle = dot_product / (magnitude_shoulder * magnitude_hip)
+            cosine_angle = np.clip(cosine_angle, -1.0, 1.0)
+            twist_angle = np.degrees(np.arccos(cosine_angle))
+            angle_data['twist_angle'] = round(twist_angle, 2)
 
-        if magnitude_shoulder_2d > 0 and magnitude_hip_2d > 0:
-            cosine_angle_2d = dot_product_2d / (magnitude_shoulder_2d * magnitude_hip_2d)
-            cosine_angle_2d = np.clip(cosine_angle_2d, -1.0, 1.0)
-            twist_angle = np.degrees(np.arccos(cosine_angle_2d))
-            
-            # If the vectors are not aligned (i.e., angle is far from 0 or 180), there's a twist
-            # We're looking for deviation from parallel (0 degrees) or anti-parallel (180 degrees)
-            # A small angle (e.g., < 15 deg) or large angle (e.g., > 165 deg) means no twist
+            # Risk for twisting: deviation from 0 or 180 degrees (parallel/anti-parallel)
+            # A small angle (e.g., < 10 deg) or large angle (e.g., > 170 deg) means minimal twist
             # Angles around 90 degrees mean significant twist
             twist_deviation = min(abs(twist_angle), abs(180 - twist_angle))
 
-            if twist_deviation > 15: # More than 15 degrees deviation from straight alignment
-                twist_risk = (twist_deviation - 15) * 1.0
+            if twist_deviation > 20: # Significant twist
+                twist_risk = (twist_deviation - 20) * 1.5
+                safe_lift = False
+            elif twist_deviation > 10: # Moderate twist
+                twist_risk = (twist_deviation - 10) * 0.7
                 safe_lift = False
             else:
                 twist_risk = 0
-            
-            risk_score += twist_risk * 0.15
+            risk_score += twist_risk * 0.2 # Weight for twist risk
+
+    # --- Head/Neck Posture (Approximation) ---
+    # Check if head is excessively tilted forward or backward relative to shoulders
+    neck_angle = None
+    if all([nose, mid_shoulder]):
+        # Approximate neck angle using nose, mid-shoulder, and a point above nose for vertical alignment
+        # This is a simplified 2D projection for forward/backward tilt
+        # More accurate would require 3D head orientation
+        
+        # Create a vertical reference point above the nose
+        vertical_ref = np.array([nose[0], nose[1] - 0.1, nose[2]]) # 0.1 units above nose in Y-axis
+        
+        # Angle between vertical_ref - nose - mid_shoulder
+        neck_angle = calculate_angle(vertical_ref, nose, mid_shoulder)
+        angle_data['neck_angle'] = round(neck_angle, 2)
+
+        if neck_angle is not None:
+            if neck_angle > 100: # Head tilted too far forward
+                neck_risk = (neck_angle - 100) * 0.8
+                safe_lift = False
+            elif neck_angle < 70: # Head tilted too far backward
+                neck_risk = (70 - neck_angle) * 0.8
+                safe_lift = False
+            else:
+                neck_risk = 0
+            risk_score += neck_risk * 0.1 # Weight for neck risk
 
     # Cap risk score at 100
     risk_score = min(100, max(0, risk_score))
@@ -174,7 +209,57 @@ def analyze_pose(landmarks):
     else:
         safe_lift = True
 
-    return {"safe_lift": safe_lift, "risk_score": round(risk_score, 2)}
+    # --- Load Distance (Approximation) ---
+    # Approximating horizontal distance from mid-hip to mid-wrist/hand
+    load_distance = None
+    if all([left_hip, right_hip, left_shoulder, right_shoulder, mp.solutions.pose.PoseLandmark.LEFT_WRIST, mp.solutions.pose.PoseLandmark.RIGHT_WRIST]):
+        left_wrist = get_landmark_coordinates(landmarks, mp.solutions.pose.PoseLandmark.LEFT_WRIST)
+        right_wrist = get_landmark_coordinates(landmarks, mp.solutions.pose.PoseLandmark.RIGHT_WRIST)
+
+        if left_wrist and right_wrist:
+            mid_hip = np.array([(left_hip[0] + right_hip[0]) / 2, (left_hip[1] + right_hip[1]) / 2, (left_hip[2] + right_hip[2]) / 2])
+            mid_wrist = np.array([(left_wrist[0] + right_wrist[0]) / 2, (left_wrist[1] + right_wrist[1]) / 2, (left_wrist[2] + right_wrist[2]) / 2])
+
+            # Calculate horizontal distance (ignoring Z for simplicity, or using Z if 3D is reliable)
+            # This is a relative distance within the normalized coordinate system (0-1)
+            load_distance = np.linalg.norm(mid_hip[:2] - mid_wrist[:2]) # Using XY plane distance
+            angle_data["load_distance"] = round(load_distance, 4)
+
+            # Risk calculation for load distance (thresholds are relative to normalized coordinates)
+            if load_distance is not None:
+                if load_distance > 0.3: # Object held far from body (relative to image size)
+                    load_risk = (load_distance - 0.3) * 50 # Higher penalty
+                    safe_lift = False
+                elif load_distance > 0.15: # Moderate distance
+                    load_risk = (load_distance - 0.15) * 20
+                    safe_lift = False
+                else:
+                    load_risk = 0
+                risk_score += load_risk * 0.15 # Weight for load distance
+
+    # --- Asymmetry (Twisting) --- 
+    # Re-evaluating twist with a more direct comparison of shoulder and hip alignment
+    # This is already partially covered, but can be enhanced for explicit asymmetry.
+    # The previous twist calculation is sufficient for now, but we can refine it if needed.
+    # For now, the existing twist_angle calculation will serve as our asymmetry metric.
+
+    # --- Lift Duration (Conceptual) ---
+    # Lift duration requires tracking the start and end of a lift. This cannot be done within a single frame analysis.
+    # It would require stateful tracking across multiple frames (e.g., detecting when hips/shoulders start moving down, then up).
+    # For the current single-frame `analyze_pose` function, we will note this as a future enhancement.
+    # Placeholder for future integration:
+    # if lift_duration > X seconds: duration_risk = ...
+
+    # Cap risk score at 100
+    risk_score = min(100, max(0, risk_score))
+
+    # If any risk was detected, safe_lift is False
+    if risk_score > 0:
+        safe_lift = False
+    else:
+        safe_lift = True
+
+    return {"safe_lift": safe_lift, "risk_score": round(risk_score, 2), "angle_data": angle_data}
 
 
 def main(video_path=None):

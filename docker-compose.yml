@@ -1,0 +1,79 @@
+version: '3.8'
+
+services:
+  # ----------------------------------------------------
+  # 1. Lift Bot API Service
+  # ----------------------------------------------------
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lift_bot_api
+    # Command to wait for the database to be ready before starting the API
+    command: >
+      sh -c "sleep 5 && uvicorn lift_bot_api:app --host 0.0.0.0 --port 8000"
+    ports:
+      - "8000:8000"
+    volumes:
+      - .:/app  # Mount the current directory for live code changes (optional for dev)
+    environment:
+      # Production-grade database URL
+      DATABASE_URL: postgresql://user:password@db:5432/liftbot_db
+      # Secrets (for local testing, replace with actual secrets in production)
+      API_KEY: Bubby0824!
+      SECRET_KEY: Petey
+    depends_on:
+      - db
+    networks:
+      - liftbot-network
+
+  # ----------------------------------------------------
+  # 3. Lift Bot Worker Service (Video Processing)
+  # ----------------------------------------------------
+  worker:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: lift_bot_worker
+    # Command to run the main worker script.
+    # This script will continuously process video streams and post data to the 'api' service.
+    command: python3 worker_tracker.py
+    volumes:
+      - .:/app
+    environment:
+      # Worker needs to know the API endpoint to post data
+      API_ENDPOINT: http://api:8000
+      # Worker needs the API key for authentication
+      API_KEY: Bubby0824!
+    depends_on:
+      - api
+    networks:
+      - liftbot-network
+
+  # ----------------------------------------------------
+  # 2. PostgreSQL Database Service
+  # ----------------------------------------------------
+  db:
+    image: postgres:14-alpine
+    container_name: lift_bot_db
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: liftbot_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data/
+    ports:
+      - "5432:5432"
+    networks:
+      - liftbot-network
+
+# ----------------------------------------------------
+# Networks and Volumes
+# ----------------------------------------------------
+networks:
+  liftbot-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+
