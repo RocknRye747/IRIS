@@ -1,5 +1,5 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, desc
+from sqlalchemy import func, and_, desc, case
 from datetime import datetime, date, timedelta
 from typing import List, Optional, Dict, Any
 import json
@@ -147,4 +147,36 @@ class DataAccessLayer:
         worker_deleted = self.db.query(Worker).filter(Worker.worker_id == worker_id).delete(synchronize_session=False)
         self.db.commit()
         return {"lift_events_deleted": lift_events_deleted, "worker_records_deleted": worker_deleted}
+
+    # --- Metrics Helpers ---
+    def get_aggregate_metrics(self, site_name: Optional[str], start_date: date, end_date: date) -> Dict[str, Any]:
+        """Compute aggregate lift metrics for an optional site over a time window."""
+
+        query = self.db.query(
+            func.count(func.distinct(LiftEvent.worker_id)).label("total_workers"),
+            func.count(LiftEvent.event_id).label("total_lifts"),
+            func.sum(case((LiftEvent.safe_lift == True, 1), else_=0)).label("safe_lifts"),
+            func.avg(LiftEvent.risk_score).label("avg_risk"),
+        ).filter(
+            func.date(LiftEvent.timestamp) >= start_date,
+            func.date(LiftEvent.timestamp) <= end_date,
+        )
+
+        if site_name:
+            query = query.join(Worker).join(Site).filter(func.lower(Site.site_name) == site_name.lower())
+
+        result = query.one()
+
+        total_lifts = result.total_lifts or 0
+        safe_lifts = result.safe_lifts or 0
+        unsafe_lifts = total_lifts - safe_lifts
+        avg_risk = float(result.avg_risk) if result.avg_risk is not None else 0.0
+
+        return {
+            "total_workers": result.total_workers or 0,
+            "total_lifts": total_lifts,
+            "safe_lifts": safe_lifts,
+            "unsafe_lifts": unsafe_lifts,
+            "avg_risk": avg_risk,
+        }
 

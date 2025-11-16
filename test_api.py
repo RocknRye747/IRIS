@@ -4,6 +4,7 @@ Test script for Lift Bot API
 Demonstrates basic API functionality including authentication, data ingestion, and reporting.
 """
 
+import os
 import requests
 import json
 from datetime import datetime, date
@@ -11,7 +12,12 @@ import time
 
 # API Configuration
 BASE_URL = "http://localhost:8000"
-API_KEY = "your-api-key-change-in-production"  # Should match the API key in lift_bot_api.py
+API_KEY = os.getenv("LIFT_BOT_API_KEY") or os.getenv("API_KEY")
+
+if not API_KEY:
+    raise SystemExit(
+        "API_KEY or LIFT_BOT_API_KEY environment variable must be set before running this script."
+    )
 
 def test_api():
     """Test the Lift Bot API endpoints"""
