@@ -10,4 +10,5 @@ mediapipe
 opencv-python
 numpy
 cjm-byte-track
+pytest
 
