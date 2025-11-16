@@ -25,7 +25,10 @@ class WorkerSessionManager:
         with self._get_db_session() as session:
             db_worker = (
                 session.query(Worker)
-                .filter(Worker.external_tracker_id == external_tracker_id, Worker.is_active == True)
+                .filter(
+                    Worker.external_tracker_id == external_tracker_id,
+                    Worker.is_active.is_(True),
+                )
                 .first()
             )
 
