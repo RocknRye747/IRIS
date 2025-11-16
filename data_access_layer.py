@@ -33,7 +33,7 @@ class DataAccessLayer:
 
         existing_active_worker = self.db.query(Worker).filter(
             Worker.external_tracker_id == external_tracker_id,
-            Worker.is_active == True
+            Worker.is_active.is_(True)
         ).first()
         if existing_active_worker:
             return existing_active_worker
@@ -72,7 +72,7 @@ class DataAccessLayer:
     def get_active_worker_by_external_id(self, external_tracker_id: str) -> Optional[Worker]:
         return self.db.query(Worker).filter(
             Worker.external_tracker_id == external_tracker_id,
-            Worker.is_active == True
+            Worker.is_active.is_(True)
         ).first()
 
     def end_worker_session(self, worker_id: str) -> Optional[Worker]:
@@ -155,7 +155,7 @@ class DataAccessLayer:
         query = self.db.query(
             func.count(func.distinct(LiftEvent.worker_id)).label("total_workers"),
             func.count(LiftEvent.event_id).label("total_lifts"),
-            func.sum(case((LiftEvent.safe_lift == True, 1), else_=0)).label("safe_lifts"),
+            func.sum(case((LiftEvent.safe_lift.is_(True), 1), else_=0)).label("safe_lifts"),
             func.avg(LiftEvent.risk_score).label("avg_risk"),
         ).filter(
             func.date(LiftEvent.timestamp) >= start_date,
