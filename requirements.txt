@@ -5,6 +5,7 @@ pydantic
 python-jose[cryptography]
 passlib[bcrypt]
 requests
+httpx
 mediapipe
 opencv-python
 numpy

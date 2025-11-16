@@ -2,7 +2,7 @@ from sqlalchemy import create_engine, Column, Integer, String, Float, Boolean, D
 from sqlalchemy.orm import declarative_base
 from sqlalchemy.orm import sessionmaker, relationship
 from sqlalchemy.types import JSON # Use generic JSON type for broader compatibility
-from datetime import datetime, date
+from datetime import datetime
 import uuid
 
 Base = declarative_base()
