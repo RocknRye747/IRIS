@@ -1,0 +1,18 @@
+IRIS Commons Hardware License
+
+This hardware design (IRIS T3 Carrier Board) is released under the terms of the IRIS Commons Hardware License.
+
+1. Free Use:
+The design is freely available for use in projects related to:
+- Humanitarian aid
+- Education
+- Community research
+
+2. Restricted Use:
+The design is explicitly restricted from use in projects related to:
+- Military applications
+- Extractive commercial exploitation
+
+Any use outside of the Free Use categories must obtain explicit written permission from IRIS Lab.
+
+Copyright (c) 2026 IRIS Lab — Integrated Reality Information Systems
