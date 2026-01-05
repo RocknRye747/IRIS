@@ -1,0 +1,83 @@
+// D2 Diagram for IRIS T3 Carrier Board Schematic Block Diagram
+
+direction: right
+
+Input: {
+  shape: cylinder
+  label: "Power Input\n(5-15V DC)"
+}
+
+Regulator_5V: {
+  shape: rectangle
+  label: "Buck Converter\n(MP1584EN)\nOutput: 5V"
+}
+
+Regulator_3V3: {
+  shape: rectangle
+  label: "LDO\n(AMS1117/RT9080)\nOutput: 3.3V"
+}
+
+MCU_Header: {
+  shape: square
+  label: "40-Pin MCU Header\n(Universal Socket)"
+}
+
+USB_C: {
+  shape: square
+  label: "USB-C Port\n(Phone Compute/5V Input)"
+}
+
+I2C_Rail: {
+  shape: square
+  label: "2x I2C Sensor Rails\n(JST-GH 4-pin)"
+}
+
+High_Bandwidth_Rail: {
+  shape: square
+  label: "High-Bandwidth Rail\n(JST-GH 6-pin)"
+}
+
+Debug_Pads: {
+  shape: square
+  label: "Debug Pads\n(SWD, UART0)"
+}
+
+Input -> Regulator_5V: {
+  label: "V_SYS (5-15V)"
+}
+
+Regulator_5V -> Regulator_3V3: {
+  label: "5V Rail"
+}
+
+Regulator_5V -> USB_C: {
+  label: "5V VBUS"
+}
+
+Regulator_5V -> High_Bandwidth_Rail: {
+  label: "5V"
+}
+
+Regulator_3V3 -> MCU_Header: {
+  label: "3.3V"
+}
+
+Regulator_3V3 -> I2C_Rail: {
+  label: "3.3V"
+}
+
+MCU_Header -> I2C_Rail: {
+  label: "I2C Buses"
+}
+
+MCU_Header -> High_Bandwidth_Rail: {
+  label: "SPI/MIPI"
+}
+
+MCU_Header -> Debug_Pads: {
+  label: "UART/SWD"
+}
+
+USB_C -> MCU_Header: {
+  label: "USB Data"
+}
