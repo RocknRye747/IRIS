@@ -22,13 +22,22 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
 # Security configuration
-SECRET_KEY = os.getenv("SECRET_KEY", "Petey")
+def _get_required_setting(name: str) -> str:
+    value = os.getenv(name)
+    if not value:
+        raise RuntimeError(
+            f"Environment variable '{name}' must be set before starting the Lift Bot API."
+        )
+    return value
+
+
+SECRET_KEY = _get_required_setting("SECRET_KEY")
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 30
 
 # API Key configuration
 API_KEY_NAME = "X-API-Key"
-API_KEY = os.getenv("API_KEY", "Bubby0824!")
+API_KEY = _get_required_setting("API_KEY")
 
 # Password hashing (not directly used for API key, but good practice for user management)
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
@@ -38,18 +47,29 @@ security = HTTPBearer()
 api_key_header = APIKeyHeader(name=API_KEY_NAME, auto_error=False)
 
 # Initialize database
-SessionLocal, engine = init_db(drop_all=os.getenv("TEST_MODE") == "true")
+
+def _initialize_database():
+    """Configure the SQLAlchemy session factory from the current environment."""
+
+    database_url = os.getenv("DATABASE_URL", "sqlite:///./liftbot.db")
+    return init_db(database_url=database_url, drop_all=False)
+
+
+SessionLocal, engine = _initialize_database()
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     # Startup logic: Ensure tables are created and handle test mode reset
+    global SessionLocal, engine
+    SessionLocal, engine = _initialize_database()
+
     if os.getenv("TEST_MODE") == "true":
         logger.info("TEST_MODE is true. Dropping all database tables.")
         Base.metadata.drop_all(bind=engine)
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables dropped and recreated for testing.")
     else:
-        # This will create tables if they don\'t exist
+        # This will create tables if they don't exist
         Base.metadata.create_all(bind=engine)
         logger.info("Database tables ensured to be created.")
     

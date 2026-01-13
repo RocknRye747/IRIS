@@ -106,6 +106,16 @@ With this framework outlined, the next steps involve:
 2.  **Implementation of Testing Scripts:** Writing the Python scripts for each module of the testing framework.
 3.  **Integration with CI/CD:** Incorporating these tests into the GitHub Actions workflow to ensure continuous validation.
 
+## 7. CI/CD Automation Implementation
+
+The repository now includes a GitHub Actions workflow (`.github/workflows/ci_cd.yml`) that operationalizes the earlier CI/CD plan:
+
+*   **Linting:** The `ruff` step guards against style regressions, unused imports, and other quality issues before runtime tests execute.
+*   **Automated Testing:** Each push, pull request, or manual dispatch provisions Python 3.11, installs the documented dependencies, seeds the environment variables required by the FastAPI app, and runs `pytest test_api_pytest.py -vv`.
+*   **Container Validation:** A final job builds the Docker image defined in `Dockerfile`, ensuring the production artifact remains reproducible and ready for deployment on services such as Railway or Vercel.
+
+Future testing modules described earlier can plug directly into this workflow by extending the pytest suite or by adding additional jobs (for example, load-testing) without altering local developer workflows.
+
 ## 7. References
 
 [1] Mean Per Joint Position Error (MPJPE) in 3D Human Pose Estimation: [https://www.researchgate.net/publication/320268688_Mean_Per_Joint_Position_Error_MPJPE_in_3D_Human_Pose_Estimation](https://www.researchgate.net/publication/320268688_Mean_Per_Joint_Position_Error_MPJPE_in_3D_Human_Pose_Estimation)
