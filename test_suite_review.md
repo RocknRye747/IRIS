@@ -45,7 +45,7 @@ While the current test suite provides a solid foundation, several areas can be i
 - **Stress Testing:** Push the API beyond its normal operating limits to observe how it behaves under extreme conditions.
 
 ### 3.4 CI/CD Integration
-- **Automated Test Execution:** Ensure that the test suite is automatically executed as part of the GitHub Actions workflow (once the workflow permissions issue is resolved or a new workflow is set up). This will provide immediate feedback on code changes.
+- **Automated Test Execution:** The repository now ships with `.github/workflows/ci_cd.yml`, which runs Ruff linting, executes `pytest test_api_pytest.py`, and validates the Docker build for every push and pull request. This provides immediate feedback on code changes without any manual setup.
 
 ## 4. Proposed Improvements for `test_api.py` (Refactoring to `pytest`)
 

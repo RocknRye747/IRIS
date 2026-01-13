@@ -1,0 +1,8 @@
+{
+  "name": "lift-bot",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "lint": "python3 -m pip install --quiet --upgrade pip && python3 -m pip install --quiet ruff==0.4.5 && python3 -m ruff check ."
+  }
+}

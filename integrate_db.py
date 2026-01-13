@@ -1,8 +1,7 @@
 
 from database import init_db, Worker, LiftEvent, Report
 from lift_bot_analyzer import analyze_pose # Assuming analyze_pose is available
-from datetime import datetime, date
-import uuid
+from datetime import datetime
 import json
 import mediapipe as mp # Import mediapipe to access PoseLandmark enums
 

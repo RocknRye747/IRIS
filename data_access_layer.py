@@ -1,9 +1,8 @@
 from sqlalchemy.orm import Session
-from sqlalchemy import func, and_, desc
-from datetime import datetime, date, timedelta
+from sqlalchemy import func, case
+from datetime import datetime, date
 from typing import List, Optional, Dict, Any
 import json
-import uuid
 
 from database import Site, Worker, LiftEvent, Report
 
@@ -33,7 +32,7 @@ class DataAccessLayer:
 
         existing_active_worker = self.db.query(Worker).filter(
             Worker.external_tracker_id == external_tracker_id,
-            Worker.is_active == True
+            Worker.is_active.is_(True)
         ).first()
         if existing_active_worker:
             return existing_active_worker
@@ -72,7 +71,7 @@ class DataAccessLayer:
     def get_active_worker_by_external_id(self, external_tracker_id: str) -> Optional[Worker]:
         return self.db.query(Worker).filter(
             Worker.external_tracker_id == external_tracker_id,
-            Worker.is_active == True
+            Worker.is_active.is_(True)
         ).first()
 
     def end_worker_session(self, worker_id: str) -> Optional[Worker]:
@@ -134,11 +133,16 @@ class DataAccessLayer:
 
     def get_reports(self, scope: Optional[str] = None, worker_id: Optional[str] = None, site_id: Optional[str] = None, period_start: Optional[date] = None, period_end: Optional[date] = None) -> List[Report]:
         query = self.db.query(Report)
-        if scope: query = query.filter(Report.scope == scope)
-        if worker_id: query = query.filter(Report.worker_id == worker_id)
-        if site_id: query = query.filter(Report.site_id == site_id)
-        if period_start: query = query.filter(Report.period_start >= period_start)
-        if period_end: query = query.filter(Report.period_end <= period_end)
+        if scope:
+            query = query.filter(Report.scope == scope)
+        if worker_id:
+            query = query.filter(Report.worker_id == worker_id)
+        if site_id:
+            query = query.filter(Report.site_id == site_id)
+        if period_start:
+            query = query.filter(Report.period_start >= period_start)
+        if period_end:
+            query = query.filter(Report.period_end <= period_end)
         return query.all()
 
     # --- Data Deletion ---
@@ -147,4 +151,36 @@ class DataAccessLayer:
         worker_deleted = self.db.query(Worker).filter(Worker.worker_id == worker_id).delete(synchronize_session=False)
         self.db.commit()
         return {"lift_events_deleted": lift_events_deleted, "worker_records_deleted": worker_deleted}
+
+    # --- Metrics Helpers ---
+    def get_aggregate_metrics(self, site_name: Optional[str], start_date: date, end_date: date) -> Dict[str, Any]:
+        """Compute aggregate lift metrics for an optional site over a time window."""
+
+        query = self.db.query(
+            func.count(func.distinct(LiftEvent.worker_id)).label("total_workers"),
+            func.count(LiftEvent.event_id).label("total_lifts"),
+            func.sum(case((LiftEvent.safe_lift.is_(True), 1), else_=0)).label("safe_lifts"),
+            func.avg(LiftEvent.risk_score).label("avg_risk"),
+        ).filter(
+            func.date(LiftEvent.timestamp) >= start_date,
+            func.date(LiftEvent.timestamp) <= end_date,
+        )
+
+        if site_name:
+            query = query.join(Worker).join(Site).filter(func.lower(Site.site_name) == site_name.lower())
+
+        result = query.one()
+
+        total_lifts = result.total_lifts or 0
+        safe_lifts = result.safe_lifts or 0
+        unsafe_lifts = total_lifts - safe_lifts
+        avg_risk = float(result.avg_risk) if result.avg_risk is not None else 0.0
+
+        return {
+            "total_workers": result.total_workers or 0,
+            "total_lifts": total_lifts,
+            "safe_lifts": safe_lifts,
+            "unsafe_lifts": unsafe_lifts,
+            "avg_risk": avg_risk,
+        }
 

@@ -6,10 +6,8 @@ from cjm_byte_track.byte_tracker import BYTETracker # Explicitly import BYTETrac
 
 from worker_tracker import WorkerSessionManager # Import our WorkerSessionManager
 from database import init_db, LiftEvent # Import DB utilities
-from video_streamer import VideoStreamer # Import our VideoStreamer
 import json
 from datetime import datetime
-import time
 
 def calculate_angle(a, b, c):
     """
@@ -80,10 +78,7 @@ def analyze_pose(landmarks):
     LEFT_KNEE = mp.solutions.pose.PoseLandmark.LEFT_KNEE
     RIGHT_KNEE = mp.solutions.pose.PoseLandmark.RIGHT_KNEE
     LEFT_ANKLE = mp.solutions.pose.PoseLandmark.LEFT_ANKLE
-    RIGHT_ANKLE = mp.solutions.pose.PoseLandmark.RIGHT_ANKLE
     NOSE = mp.solutions.pose.PoseLandmark.NOSE
-    LEFT_EAR = mp.solutions.pose.PoseLandmark.LEFT_EAR
-    RIGHT_EAR = mp.solutions.pose.PoseLandmark.RIGHT_EAR
 
     # Extract coordinates
     left_shoulder = get_landmark_coordinates(landmarks, LEFT_SHOULDER)
@@ -93,10 +88,7 @@ def analyze_pose(landmarks):
     left_knee = get_landmark_coordinates(landmarks, LEFT_KNEE)
     right_knee = get_landmark_coordinates(landmarks, RIGHT_KNEE)
     left_ankle = get_landmark_coordinates(landmarks, LEFT_ANKLE)
-    right_ankle = get_landmark_coordinates(landmarks, RIGHT_ANKLE)
     nose = get_landmark_coordinates(landmarks, NOSE)
-    left_ear = get_landmark_coordinates(landmarks, LEFT_EAR)
-    right_ear = get_landmark_coordinates(landmarks, RIGHT_EAR)
 
     # --- Back Rounding (Spine Angle) --- 
     # Using mid-shoulder, mid-hip, and mid-knee to approximate torso bend relative to legs
